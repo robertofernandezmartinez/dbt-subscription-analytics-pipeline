@@ -23,6 +23,8 @@ Silver   models/staging/ cleaning, casting, dedup, status derivation
 Gold     models/marts/   analytics-ready single source of truth
 ```
 
+![Data lineage](docs/lineage.png)
+
 Models: `stg_orders` · `stg_customers` · `stg_products` · `stg_subscriptions` → `dim_customers` · `dim_products` · `dim_subscriptions` · `fct_orders` · `fct_mrr_monthly` · `fct_mrr_waterfall`
 
 > In production, source data would arrive via an external ingestion layer (Fivetran, Airbyte) and be referenced with `{{ source() }}`. Seeds are used here as a substitute for the exercise.
@@ -102,6 +104,21 @@ Full SQL in `analyses/kpi_framework.sql`.
 - **Materialize the MRR aggregation** as a scheduled materialized view so BI tools hit the materialized layer, not the raw fact table.
 
 The model is designed with this in mind: partition keys are implicit in the grain, all dedup and cleaning logic is isolated in staging, and no transformation assumes full-table availability.
+
+---
+
+## Testing
+
+This project includes two layers of tests:
+
+**Schema tests** (defined in `schema.yml`): uniqueness and not-null checks on all primary keys, and accepted values on status fields. Run with `dbt test`.
+
+**Business logic tests** (in `tests/`):
+- `assert_mrr_non_negative` — MRR at monthly grain should never be negative
+- `assert_revenue_valid_implies_positive_price` — every order flagged as revenue-valid must have a price above 0.01€
+- `assert_mrr_clients_exist_in_dim` — every client in the MRR table must exist in dim_customers
+
+Run all tests with `dbt build` or `dbt test`.
 
 ---
 
