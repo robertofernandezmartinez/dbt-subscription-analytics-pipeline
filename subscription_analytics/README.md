@@ -42,6 +42,14 @@ dbt run           # build all models
 dbt test          # run data quality tests
 ```
 
+## CI/CD
+
+This project uses GitHub Actions to run `dbt build` (models + tests) on every push to `main` and on every pull request.
+
+To enable it in your own fork, add these secrets in GitHub → Settings → Secrets:
+- `GCP_PROJECT_ID` — your GCP project ID
+- `GCP_SA_KEY` — the full contents of your service account JSON keyfile
+
 ---
 
 ## Pipeline architecture
