@@ -1,6 +1,5 @@
--- kpi_framework.sql
--- 10 KPIs for the team.blue subscription business.
--- Run each block independently against the Gold layer.
+-- 10 KPIs for the team.blue subscription business
+-- Run each block independently against the Gold layer
 
 
 -- 1. MRR — Monthly Recurring Revenue
