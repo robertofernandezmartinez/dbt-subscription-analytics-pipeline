@@ -1,4 +1,4 @@
--- 10 KPIs for the team.blue subscription business
+-- 10 KPIs for the subscription business
 -- Run each block independently against the Gold layer
 
 
