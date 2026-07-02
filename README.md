@@ -23,7 +23,7 @@ Silver   models/staging/ cleaning, casting, dedup, status derivation
 Gold     models/marts/   analytics-ready single source of truth
 ```
 
-![Data lineage](docs/lineage.png)
+![Data lineage](https://raw.githubusercontent.com/robertofernandezmartinez/dbt-subscription-analytics-pipeline/main/docs/lineage_graph.png)
 
 Models: `stg_orders` · `stg_customers` · `stg_products` · `stg_subscriptions` → `dim_customers` · `dim_products` · `dim_subscriptions` · `fct_orders` · `fct_mrr_monthly` · `fct_mrr_waterfall`
 
