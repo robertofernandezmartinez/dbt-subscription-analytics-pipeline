@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: "Order-grain fact table. MRR contribution normalized by duration_months."
+    columns:
+      - name: client_id
+        tests:
+          - not_null
+      - name: is_revenue_valid
+        tests:
+          - not_null
+
+  - name: fct_mrr_monthly
+    description: "Central MRR table. Grain: client x month x product category."
+    columns:
+      - name: client_id
+        tests:
+          - not_null
+      - name: month_date
+        tests:
+          - not_null
+      - name: mrr
+        tests:
+          - not_null
+  
+  - name: fct_mrr_waterfall
+    description: "MRR movement breakdown by month. New/Expansion/Contraction/Churn/Reactivation."
+    columns:
+      - name: month_date
+        tests:
+          - not_null
+      - name: mrr_movement_type
+        tests:
+          - not_null
+
+  - name: dim_customers
+    columns:
+      - name: client_id
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_products
+    columns:
+      - name: product_id
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_subscriptions
+    columns:
+      - name: subscription_id
+        tests:
+          - not_null
+          - unique

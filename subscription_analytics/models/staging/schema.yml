@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "Cleaned and deduplicated orders. Revenue validity flagged via is_revenue_valid."
+    columns:
+      - name: ordercode
+        tests:
+          - not_null
+      - name: client_id
+        tests:
+          - not_null
+      - name: is_revenue_valid
+        tests:
+          - not_null
+
+  - name: stg_customers
+    description: "Cleaned customer dimension. Null countries mapped to UNKNOWN."
+    columns:
+      - name: client_id
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_products
+    description: "Cleaned product hierarchy. Trailing commas stripped from category fields."
+    columns:
+      - name: product_id
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_subscriptions
+    description: "Subscriptions with derived status_clean from expire_date and raw status."
+    columns:
+      - name: subscription_id
+        tests:
+          - not_null
+          - unique
+      - name: subscription_status_clean
+        tests:
+          - accepted_values:
+              values: ['ACTIVE', 'EXPIRED_SILENT', 'CANCELLED', 'SUSPENDED', 'IN_TRANSITION', 'OTHER']

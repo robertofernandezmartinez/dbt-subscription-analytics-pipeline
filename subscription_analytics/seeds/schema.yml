@@ -1,0 +1,18 @@
+version: 2
+
+seeds:
+  - name: orders_in_
+    config:
+      column_types:
+        subscription_id: string
+        duration_months: string
+
+  - name: customers_in_
+    config:
+      column_types:
+        join_date: string
+
+  - name: products_in_
+    config:
+      column_types:
+        product_id: string
