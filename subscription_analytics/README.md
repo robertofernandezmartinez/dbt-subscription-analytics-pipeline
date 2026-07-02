@@ -1,199 +1,127 @@
 # dbt Subscription Analytics Pipeline
 
-This project builds a unified revenue and product performance model for a subscription business, transforming four raw Bronze datasets into a Gold analytics layer that enables the Director of Revenue to understand MRR trends, growth drivers, customer retention, and cross-sell performance.
+Bronze-to-Gold dbt pipeline on subscription revenue data, built on BigQuery. Transforms four raw source datasets into a unified analytics layer for MRR analysis, customer retention, churn tracking, and cross-sell performance.
+
+---
+
+## What this delivers
+
+| Deliverable | Where |
+|-------------|-------|
+| Transformation Logic | `models/staging/` + `models/marts/` |
+| Data Product Definition | Below |
+| KPI Framework (10 KPIs) | Below + `analyses/kpi_framework.sql` |
+| Insights Memo | Below |
 
 ---
 
 ## Pipeline Architecture
 
 ```
-Bronze (seeds/)
-  Raw CSVs loaded as-is into BigQuery
-  └── orders_in_ · customers_in_ · products_in_ · subscriptions_in_
-
-Silver (models/staging/)
-  Cleaning, type casting, deduplication, status derivation
-  └── stg_orders · stg_customers · stg_products · stg_subscriptions
-
-Gold (models/marts/)
-  Analytics-ready tables — the single source of truth
-  └── dim_customers · dim_products · dim_subscriptions
-      fct_orders · fct_mrr_monthly · fct_mrr_waterfall
+Bronze   seeds/          raw CSVs loaded into BigQuery
+Silver   models/staging/ cleaning, casting, dedup, status derivation
+Gold     models/marts/   analytics-ready single source of truth
 ```
 
-**Note on seeds:** In production, source data would be ingested by an external ETL process (Fivetran, Airbyte, or a custom pipeline) and referenced via `{{ source() }}`. Seeds are used here as a pragmatic substitute for the purposes of this exercise.
+Models: `stg_orders` · `stg_customers` · `stg_products` · `stg_subscriptions` → `dim_customers` · `dim_products` · `dim_subscriptions` · `fct_orders` · `fct_mrr_monthly` · `fct_mrr_waterfall`
+
+> In production, source data would arrive via an external ingestion layer (Fivetran, Airbyte) and be referenced with `{{ source() }}`. Seeds are used here as a substitute for the exercise.
 
 ---
 
-## Deliverable 1 — Transformation Logic
+## Data Product Definition
 
-All transformation logic lives in `models/staging/` (Silver layer) and `models/marts/` (Gold layer). Each model is documented inline with the decisions made and why.
+`fct_mrr_monthly` is the core data product — one row per `client_id × month_date × product_cat_desc`. This grain supports every downstream KPI (MRR trend, ARPU, cohort retention, cross-sell) without re-aggregating from raw orders each time, while remaining granular enough for per-client and per-category analysis.
 
-Key transformations:
+`fct_mrr_waterfall` decomposes MRR change into New, Expansion, Contraction, Churn, and Reactivation — the breakdown the Director of Revenue needs to understand what is driving growth or decline each month.
 
-- **Deduplication** — 10,011 exact duplicate orders removed via `QUALIFY ROW_NUMBER()` on the full row signature
-- **Revenue validity flag** — `is_revenue_valid` in `stg_orders` protects MRR from three distinct classes of non-revenue records (see Insights Memo)
-- **Status derivation** — `subscription_status_clean` derived from a combination of raw `status` and `expire_date` (see Insights Memo)
-- **Category cleanup** — trailing commas stripped from `product_cat_desc` values, a source CSV export artifact
+`fct_orders` is kept as the order-grain traceability layer. Every number in `fct_mrr_monthly` reconciles back to specific order lines.
 
 ---
 
-## Deliverable 2 — Data Product Definition
+## KPI Framework
 
-**`fct_mrr_monthly`** is the core data product. Grain: one row per `client_id × month_date × product_cat_desc`.
+Full SQL in `analyses/kpi_framework.sql`.
 
-Why this grain: it is the minimum granularity that supports every KPI in the framework without re-deriving from raw orders each time. Going coarser (month-only) would lose the ability to do cohort and cross-sell analysis per client. Going finer (per order) would push all aggregation logic into every downstream query, risking inconsistent numbers across reports — the exact fragmentation problem the Director of Revenue is trying to solve.
+**1. MRR** — the single number that tells whether the business is growing. Built from revenue-valid orders only, excluding placeholder prices, zero-quantity records, and one-time charges.
 
-**`fct_mrr_waterfall`** decomposes MRR movement month-over-month into New, Expansion, Contraction, Churn, and Reactivation — the standard breakdown for understanding revenue growth drivers.
+**2. MRR Growth Rate (MoM %)** — the trend matters more than the absolute. Signals acceleration or deceleration before it becomes visible in absolute MRR.
 
-**`fct_orders`** is the order-grain fact table, kept for traceability. Every number in `fct_mrr_monthly` can be reconciled to specific order lines.
+**3. New MRR** — isolates growth from new customer acquisition vs. expansion of existing accounts. Needed to separate acquisition efficiency from relationship depth.
 
-The three dimension tables (`dim_customers`, `dim_products`, `dim_subscriptions`) provide the context for slicing and filtering: by segment, product category, subscription status, and customer cohort.
+**4. Active Subscription Base** — the denominator for ARPU and churn rate. Without a precise active definition (see below), every KPI built on this number is unreliable.
 
----
+**5. ARPU** — distinguishes "more customers" growth from "more value per customer." If the cross-sell strategy is working, ARPU rises. If only volume grows, ARPU stays flat.
 
-## Deliverable 3 — KPI Framework
+**6. Churn Rate (subscriptions)** — raw count of subscriptions lost per month. Signals product stickiness and the pace at which the base is eroding.
 
-Full SQL for each KPI in `analyses/kpi_framework.sql`.
+**7. Customer Churn Rate (%)** — churn normalized against the active base. A count of 500 churned subscriptions on a base of 5,000 is very different from the same count on 50,000.
 
-### 1. MRR (Monthly Recurring Revenue)
-The single number that tells the Director of Revenue whether the business is growing. Built from revenue-valid orders only — excludes 0.01€ placeholder lines, zero-quantity records, and one-time charges that would inflate the recurring revenue figure if included naively.
+**8. Cross-Sell Rate** — percentage of customers with 2+ product categories. Directly measures progress against the stated strategic goal of cross-selling across categories to increase ARPU.
 
-### 2. MRR Growth Rate (Month-over-Month %)
-The trend matters more than the absolute number. A business growing at 5% MoM is in a fundamentally different position than one at -2%, even if the absolute MRR is similar. This KPI signals acceleration or deceleration early.
+**9. Cohort Retention (M3/M6/M12)** — the most honest signal of product-market fit. Tracks what share of customers acquired in a given month are still active at 3, 6, and 12 months.
 
-### 3. New MRR
-Isolates the contribution of newly acquired customers from expansion of existing accounts. Essential for understanding whether growth is driven by acquisition efficiency or by deepening relationships with the existing base.
-
-### 4. Active Subscription Base
-The foundation for ARPU and churn calculations. Without a precise definition of "active" (see Insights Memo), every downstream KPI built on this number is unreliable. Tracked at subscription level to reflect the true operational base, not just billing accounts.
-
-### 5. ARPU (Average Revenue Per User)
-The key signal for the cross-sell strategy. If MRR grows but ARPU stays flat, growth is coming from volume, not from increasing value per customer. If ARPU grows, the cross-sell initiative is working. Tracked monthly to detect trend changes early.
-
-### 6. Churn Rate (Subscriptions)
-The raw count of subscriptions lost each month, using a 30-day grace window past `expire_date` to avoid counting late renewals as churn. Essential for understanding product stickiness and the rate at which the business is losing its base.
-
-### 7. Customer Churn Rate (%)
-The churn count normalized against the active base. A raw count of 500 churned subscriptions means something very different on a base of 5,000 vs 50,000. This percentage is the comparable, trackable signal that tells the business if retention is improving or deteriorating over time.
-
-### 8. Cross-Sell Rate (customers with 2+ product categories)
-The business case explicitly states the ambition to cross-sell across categories to increase ARPU. This KPI directly measures progress against that goal: what percentage of the customer base has purchased products from more than one category. It is the leading indicator for ARPU growth.
-
-### 9. Cohort Retention (M3 / M6 / M12)
-The most honest signal of product-market fit. Not "are we adding customers" but "do the customers we add stay." Tracked at 3, 6, and 12 months post acquisition to identify at which point customers are most likely to churn and whether product improvements are extending retention over time.
-
-### 10. Customer LTV (Simplified)
-Connects acquisition decisions to long-term value. Without LTV, there is no rational basis for deciding how much to spend on acquiring a customer. Even a simplified `average revenue × average lifespan` gives the Director of Revenue a number to anchor commercial decisions against.
+**10. Customer LTV** — average revenue over average customer lifespan. Without LTV there is no rational basis for acquisition spend decisions.
 
 ---
 
-## Deliverable 4 — Insights Memo
+## Insights Memo
 
-### How data quality issues were handled
+### Data quality issues
 
-**`productprice = 0.01` (33% of orders), concentrated in Applications (63%).**
-Too large and too consistent a pattern to be random noise — most likely internal/bundled line items, free add-ons, or system migration placeholders. Rather than dropping these rows, they are flagged via `is_revenue_valid = FALSE` in `stg_orders`. MRR calculations filter on this flag; order-volume analysis does not. This preserves the full audit trail while protecting MRR accuracy.
+**`productprice = 0.01` (33% of orders).** Systematic pattern concentrated in Applications (63%) — most likely bundled line items or migration placeholders, not noise. Flagged as `is_revenue_valid = FALSE` rather than dropped, so MRR excludes them while activity analysis retains them.
 
-**`quantity = 0` (37% of orders).** Overlaps heavily with the 0.01 price rows (49,201 rows have both conditions) but is not identical — both conditions are needed independently in `is_revenue_valid`. A zero-quantity order generates `productprice × 0 = 0` revenue regardless of price.
+**`quantity = 0` (37% of orders).** Overlaps with the 0.01 rows but not identical — both conditions needed independently in `is_revenue_valid`. Zero quantity means zero revenue regardless of price.
 
-**`flag_recurring = 0` (1.15% of orders).** One-time charges (setup fees, domain transfers) mixed into the same table as recurring subscriptions. Excluded from MRR via a third condition in `is_revenue_valid` — a one-time charge must not be spread across months as if it were recurring revenue.
+**`flag_recurring = 0` (1.15% of orders).** One-time charges mixed into the same table as recurring subscriptions. Excluded from MRR — a one-time charge must not be spread across months as recurring revenue.
 
-**Exact duplicate orders (10,011 rows, 5%).** Removed via `QUALIFY ROW_NUMBER()` on the full row signature. Duplicate `ordercode` values that differ in `subscription_id` or price are kept — they represent technical order splits or repricing events, not data errors.
+**Exact duplicate orders (10,011 rows).** Removed via `QUALIFY ROW_NUMBER()`. Rows sharing an `ordercode` but differing in `subscription_id` or price are kept — they are order splits or repricing events, not duplicates.
 
-**Negative prices (1,744 rows, min -2,159€).** Legitimate refunds. Kept as-is so they correctly reduce MRR in the month recorded rather than retroactively correcting the original order.
+**Negative prices (1,744 rows).** Legitimate refunds. Kept as-is to correctly reduce MRR in the month recorded.
 
-**`products` CSV had malformed header** (`product_cat_desc,,,,`) and trailing commas baked into category values (`Domains,,,,`). Fixed at ingestion and via `REGEXP_REPLACE` in `stg_products`.
+**`products` CSV malformed header** (`product_cat_desc,,,,`) and trailing commas in values. Fixed at ingestion and via `REGEXP_REPLACE` in `stg_products`.
 
-**25,679 orders with no `subscription_id`** are legitimate recurring orders simply not linked to a subscription record in the source system. Included in MRR but excluded from subscription-level analysis. Flagged for Data Management.
+**25,679 orders with no `subscription_id`.** Legitimate recurring orders not linked to a subscription record in the source system. Included in MRR, excluded from subscription-level analysis. Flagged for Data Management.
 
-**Referential integrity:** 1 orphan `product_id` and 4 orphan `subscription_id` values in orders. Kept, flagged for Data Management.
+### Active and Churn definitions
 
----
+`status` is NULL for 71.7% of subscriptions. This is not missing data — the source system only writes a status when something changes. NULL means "nothing happened yet." Splitting the NULL population by `expire_date` reveals two groups: future expire date (ACTIVE) and past expire date (EXPIRED_SILENT).
 
-### How "Active" and "Churn" were defined
+**Active:** `expire_date >= CURRENT_DATE AND (status IS NULL OR status NOT IN ('CANCELLED', 'TO DELETE', 'SUSPENDED'))`
 
-**The most consequential data quality decision in this dataset:** `status` is NULL for 71.7% of subscriptions. This is not missing data — the source system only writes a status value when something happens (cancelled, suspended, etc.). NULL means "nothing changed yet."
+**Churned:** not ACTIVE or IN_TRANSITION, AND `expire_date` more than 30 days in the past. The 30-day grace window covers payment retry cycles and late renewals common in subscription billing.
 
-Splitting the NULL population by `expire_date` reveals two distinct groups:
-- NULL + `expire_date` in the future → **ACTIVE**
-- NULL + `expire_date` in the past → **EXPIRED_SILENT** (lapsed without an explicit status event)
+**AWAITING PAYMENT / UNPAID** are flagged separately as `is_at_risk` — an early churn signal distinct from confirmed churn.
 
-**Active definition:**
-```
-expire_date >= CURRENT_DATE
-AND (status IS NULL OR status NOT IN ('CANCELLED', 'TO DELETE', 'SUSPENDED'))
-```
+### Scaling to 200M rows
 
-**Churned definition:** not ACTIVE or IN_TRANSITION, AND `expire_date` more than 30 days in the past. The 30-day grace window accounts for late renewals and payment retry cycles common in subscription billing — treating the exact expiration date as the churn event would overstate churn for customers who renew within a normal grace period.
+- **Partition** `fct_orders` and `fct_mrr_monthly` by month — every MRR query filters by date, making partitioning the single highest-impact change.
+- **Cluster** on `client_id` and `product_cat_desc` — the two most common secondary filter dimensions.
+- **Incremental models** — replace full rebuilds of `fct_mrr_monthly` with dbt incremental materializations that process only new or changed records.
+- **Upstream deduplication** — move the `QUALIFY ROW_NUMBER()` logic from staging to a streaming dedup layer before data lands in the warehouse.
+- **Materialize the MRR aggregation** as a scheduled materialized view so BI tools hit the materialized layer, not the raw fact table.
 
-**AWAITING PAYMENT and UNPAID** are flagged separately as `is_at_risk` in `dim_subscriptions` — an early churn signal worth monitoring independently from confirmed churn.
-
----
-
-### Additional findings from exploration
-
-**96% of customers are Italian.** The cross-sell strategy operates in effectively a single-country market. Cross-sell KPI benchmarks should reflect this context rather than multi-market norms.
-
-**`join_date` spike on 2016-10-26/27** (1,050 customers in two days vs ~75 typical). Most likely a data migration event or major campaign. Flagged as `is_migration_cohort` in `dim_customers` to allow isolation from retention metrics until the business confirms the nature of the spike.
-
-**Segment labels** (Ret-E, Ret-N, Res, obp, Registry) are not documented in the source. Business validation needed before using segment as an analysis dimension.
-
----
-
-### Scaling from 200K to 200M rows
-
-- **Partition `fct_orders` and `fct_mrr_monthly` by month.** Every MRR query filters by date — without partitioning, every query scans the full table.
-- **Cluster on `client_id` and `product_cat_desc`** — the two most common filter dimensions after date, for retention and cross-sell queries.
-- **Incremental models** instead of full rebuilds. The staging layer already isolates clean, datestamped records which makes the incremental predicate trivial.
-- **Push deduplication upstream** — the `QUALIFY ROW_NUMBER()` logic moves to a streaming dedup layer before data lands in the warehouse.
-- **Materialize the monthly MRR aggregation** as a scheduled materialized view. BI tools and analysts hit the materialized layer, not the fact table.
-
-The model is designed with this transition in mind: partition keys are already implicit in the grain (`month_date`, `client_id`), all cleaning and dedup logic is isolated in the staging layer, and no transformation assumes full-table availability.
+The model is designed with this in mind: partition keys are implicit in the grain, all dedup and cleaning logic is isolated in staging, and no transformation assumes full-table availability.
 
 ---
 
 ## CI/CD
 
-This project uses GitHub Actions to run `dbt build` (models + tests) on
-every push to `main` and on every pull request.
+GitHub Actions runs `dbt build` (models + tests) on every push to `main` and on every pull request. See `.github/workflows/dbt_ci.yml`.
 
-To enable it in your own fork, add these secrets in GitHub → Settings → Secrets:
-- `GCP_PROJECT_ID` — your GCP project ID
-- `GCP_SA_KEY` — the full contents of your service account JSON keyfile
+To enable: add `GCP_PROJECT_ID` and `GCP_SA_KEY` as repository secrets in GitHub → Settings → Secrets.
 
 ---
 
 ## How to run
 
-### Requirements
-- Python 3.8+
-- `pip install dbt-bigquery`
-- GCP project with BigQuery enabled and a service account with BigQuery Admin role
-
-### Setup
-
-Configure `~/.dbt/profiles.yml`:
-
-```yaml
-subscription_analytics:
-  target: dev
-  outputs:
-    dev:
-      type: bigquery
-      method: service-account
-      project: YOUR_GCP_PROJECT_ID
-      dataset: subscription_analytics
-      keyfile: /path/to/your/keyfile.json
-      threads: 4
-      timeout_seconds: 300
-```
-
-### Run
-
 ```bash
+pip install dbt-bigquery
 cd subscription_analytics
-dbt seed    # load source CSVs into BigQuery
-dbt run     # build all models
-dbt test    # run data quality tests
+dbt seed      # load source CSVs into BigQuery
+dbt run       # build all models
+dbt test      # run data quality and business logic tests
+dbt docs generate && dbt docs serve  # browse lineage and column docs at localhost:8080
 ```
+
+Configure `~/.dbt/profiles.yml` with your GCP project and service account keyfile before running.
